@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"net"
@@ -185,20 +184,7 @@ type CreateOrderResponse struct {
 	PaymentId string
 }
 
-type PaymentServiceClient interface {
-	ProcessPayment(ctx context.Context, req *PaymentRequest) (*PaymentResponse, error)
-}
 
-type PaymentRequest struct {
-	OrderId string
-	Amount  float64
-	Email   string
-}
-
-type PaymentResponse struct {
-	Success   bool
-	PaymentId string
-}
 
 func NewPaymentServiceClient(cc *grpc.ClientConn) PaymentServiceClient {
 	return &paymentServiceClient{cc}
