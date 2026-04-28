@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_broker
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-service:
+    build:
+      context: ./order-service
+    container_name: order_service
+    ports:
+      - "50051:50051"
+    environment:
+      - DB_HOST=postgres_db
+      - DB_USER=admin
+      - DB_PASSWORD=password123
+      - DB_NAME=orderdb
+      - DB_PORT=5432
+      - PAYMENT_SERVICE_URL=payment_service:50052
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  payment-service:
+    build:
+      context: ./payment-service
+    container_name: payment_service
+    ports:
+      - "50052:50052"
+    environment:
+      - DB_HOST=postgres_db
+      - DB_USER=admin
+      - DB_PASSWORD=password123
+      - DB_NAME=paymentdb
+      - DB_PORT=5432
+      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq_broker:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  notification-service:
+    build:
+      context: ./notification-service
+    container_name: notification_service
+    environment:
+      - DB_HOST=postgres_db
+      - DB_USER=admin
+      - DB_PASSWORD=password123
+      - DB_NAME=notifdb
+      - DB_PORT=5432
+      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq_broker:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  pgdata:

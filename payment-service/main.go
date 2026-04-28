@@ -163,7 +163,9 @@ func main() {
 		false,
 		false,
 		amqp.Table{
+			"x-queue-type":           "quorum",
 			"x-dead-letter-exchange": "payment.events.dlx",
+			"x-delivery-limit":       3,
 		},
 	)
 	if err != nil {

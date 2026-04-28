@@ -26,6 +26,15 @@ Manual acknowledgments are implemented with the following guarantees:
     - `msg.Nack(false, false)` for permanent failures (message discarded or sent to DLQ)
 4. **QoS prefetch**: Set to 1 to process one message at a time
 
+## Dead Letter Queue (DLQ) Implementation
+
+The system implements advanced reliability via a DLQ using RabbitMQ Quorum Queues:
+1. **Quorum Queue**: The `payment.completed` queue is initialized as a Quorum Queue (`x-queue-type: quorum`).
+2. **Delivery Limit**: The queue leverages `x-delivery-limit: 3`, meaning if a message is rejected (`Nack` with requeue=true) 3 times, it is considered a poison pill.
+3. **Dead Letter Exchange**: Upon hitting the delivery limit, the message is automatically routed to the `payment.events.dlx` exchange.
+4. **Dead Letter Queue**: Messages are finally stored in `payment.dlq` for administrator review.
+*Note: A simulated failure is included in the Notification Service if `Amount < 0` to demonstrate the DLQ behavior.*
+
 ## Event Flow
 
 1. Order Service creates order via gRPC

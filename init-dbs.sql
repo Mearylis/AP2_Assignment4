@@ -1,0 +1,3 @@
+CREATE DATABASE orderdb;
+CREATE DATABASE paymentdb;
+CREATE DATABASE notifdb;

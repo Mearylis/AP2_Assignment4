@@ -71,6 +71,45 @@ func main() {
 		log.Fatalf("Failed to set QoS: %v", err)
 	}
 
+	// Declare DLX
+	err = ch.ExchangeDeclare(
+		"payment.events.dlx",
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare DLX: %v", err)
+	}
+
+	// Declare DLQ
+	_, err = ch.QueueDeclare(
+		"payment.dlq",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare DLQ: %v", err)
+	}
+
+	// Bind DLQ to DLX
+	err = ch.QueueBind(
+		"payment.dlq",
+		"",
+		"payment.events.dlx",
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to bind DLQ: %v", err)
+	}
+
 	queue, err := ch.QueueDeclare(
 		"payment.completed",
 		true,
@@ -78,8 +117,9 @@ func main() {
 		false,
 		false,
 		amqp.Table{
+			"x-queue-type":           "quorum",
 			"x-dead-letter-exchange": "payment.events.dlx",
-			"x-max-retries":          3,
+			"x-delivery-limit":       3,
 		},
 	)
 	if err != nil {
@@ -151,6 +191,14 @@ func (s *NotificationService) handleMessage(msg amqp.Delivery) {
 	if s.isDuplicate(event.EventID) {
 		log.Printf("Duplicate event %s detected, acknowledging without processing", event.EventID)
 		msg.Ack(false)
+		return
+	}
+
+	// Simulate permanent failure for specific condition to test DLQ (Amount < 0)
+	if event.Amount < 0 {
+		log.Printf("Simulating failure for EventID %s (Amount < 0) - will requeue for retry", event.EventID)
+		time.Sleep(1 * time.Second) // Slow down retries a bit
+		msg.Nack(false, true)
 		return
 	}
 
