@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -28,39 +30,16 @@ type Order struct {
 
 type OrderService struct {
 	db            *gorm.DB
-	paymentClient PaymentServiceClient
+	paymentClient pb.PaymentServiceClient
 	grpcServer    *grpc.Server
 }
 
-type PaymentRequest struct {
-	OrderID string
-	Amount  float64
-	Email   string
-}
-
-type PaymentResponse struct {
-	Success   bool
-	PaymentID string
-}
-
-type PaymentServiceClient interface {
-	ProcessPayment(ctx context.Context, req *PaymentRequest) (*PaymentResponse, error)
-}
-
-type GRPCPaymentClient struct {
-	client PaymentServiceClient
-	conn   *grpc.ClientConn
-}
-
-func (c *GRPCPaymentClient) ProcessPayment(ctx context.Context, req *PaymentRequest) (*PaymentResponse, error) {
-	return c.client.ProcessPayment(ctx, req)
-}
-
 type OrderServer struct {
+	pb.UnimplementedOrderServiceServer
 	orderService *OrderService
 }
 
-func (s *OrderServer) CreateOrder(ctx context.Context, req *CreateOrderRequest) (*CreateOrderResponse, error) {
+func (s *OrderServer) CreateOrder(ctx context.Context, req *pb.CreateOrderRequest) (*pb.CreateOrderResponse, error) {
 	order := &Order{
 		ID:        fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
 		UserID:    req.UserId,
@@ -74,8 +53,8 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *CreateOrderRequest) 
 		return nil, status.Errorf(codes.Internal, "failed to create order: %v", err)
 	}
 
-	paymentResp, err := s.orderService.paymentClient.ProcessPayment(ctx, &PaymentRequest{
-		OrderID: order.ID,
+	paymentResp, err := s.orderService.paymentClient.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		OrderId: order.ID,
 		Amount:  order.Amount,
 		Email:   order.Email,
 	})
@@ -87,10 +66,10 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *CreateOrderRequest) 
 
 	if paymentResp.Success {
 		s.orderService.db.Model(order).Update("status", "COMPLETED")
-		return &CreateOrderResponse{
+		return &pb.CreateOrderResponse{
 			OrderId:   order.ID,
 			Status:    "COMPLETED",
-			PaymentId: paymentResp.PaymentID,
+			PaymentId: paymentResp.PaymentId,
 		}, nil
 	}
 
@@ -118,25 +97,22 @@ func main() {
 		getEnv("PAYMENT_SERVICE_URL", "localhost:50052"),
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
-		grpc.WithTimeout(5*time.Second),
+		grpc.WithTimeout(15*time.Second),
 	)
 	if err != nil {
 		log.Fatalf("Failed to connect to payment service: %v", err)
 	}
 
-	paymentClient := NewPaymentServiceClient(paymentConn)
-	grpcPaymentClient := &GRPCPaymentClient{
-		client: paymentClient,
-		conn:   paymentConn,
-	}
+	paymentClient := pb.NewPaymentServiceClient(paymentConn)
 
 	orderService := &OrderService{
 		db:            db,
-		paymentClient: grpcPaymentClient,
+		paymentClient: paymentClient,
 	}
 
 	grpcServer := grpc.NewServer()
-	RegisterOrderServiceServer(grpcServer, &OrderServer{orderService: orderService})
+	pb.RegisterOrderServiceServer(grpcServer, &OrderServer{orderService: orderService})
+	reflection.Register(grpcServer)
 
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -170,33 +146,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-type CreateOrderRequest struct {
-	UserId string
-	Amount float64
-	Email  string
-}
-
-type CreateOrderResponse struct {
-	OrderId   string
-	Status    string
-	PaymentId string
-}
-
-
-
-func NewPaymentServiceClient(cc *grpc.ClientConn) PaymentServiceClient {
-	return &paymentServiceClient{cc}
-}
-
-type paymentServiceClient struct {
-	cc *grpc.ClientConn
-}
-
-func (c *paymentServiceClient) ProcessPayment(ctx context.Context, req *PaymentRequest) (*PaymentResponse, error) {
-	return nil, nil
-}
-
-func RegisterOrderServiceServer(s *grpc.Server, srv *OrderServer) {
 }

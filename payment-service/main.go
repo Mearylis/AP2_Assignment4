@@ -11,9 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"pb"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -46,10 +48,11 @@ type PaymentService struct {
 }
 
 type PaymentServer struct {
+	pb.UnimplementedPaymentServiceServer
 	paymentService *PaymentService
 }
 
-func (s *PaymentServer) ProcessPayment(ctx context.Context, req *ProcessPaymentRequest) (*ProcessPaymentResponse, error) {
+func (s *PaymentServer) ProcessPayment(ctx context.Context, req *pb.ProcessPaymentRequest) (*pb.ProcessPaymentResponse, error) {
 	payment := &Payment{
 		ID:        fmt.Sprintf("PAY-%d", time.Now().UnixNano()),
 		OrderID:   req.OrderId,
@@ -79,13 +82,13 @@ func (s *PaymentServer) ProcessPayment(ctx context.Context, req *ProcessPaymentR
 
 	if err := s.paymentService.publishEvent(event); err != nil {
 		log.Printf("Failed to publish event: %v", err)
-		return &ProcessPaymentResponse{
+		return &pb.ProcessPaymentResponse{
 			Success:   true,
 			PaymentId: payment.ID,
 		}, nil
 	}
 
-	return &ProcessPaymentResponse{
+	return &pb.ProcessPaymentResponse{
 		Success:   true,
 		PaymentId: payment.ID,
 	}, nil
@@ -191,7 +194,8 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	RegisterPaymentServiceServer(grpcServer, &PaymentServer{paymentService: paymentService})
+	pb.RegisterPaymentServiceServer(grpcServer, &PaymentServer{paymentService: paymentService})
+	reflection.Register(grpcServer)
 
 	lis, err := net.Listen("tcp", ":50052")
 	if err != nil {
@@ -226,18 +230,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-type ProcessPaymentRequest struct {
-	OrderId string
-	Amount  float64
-	Email   string
-}
-
-type ProcessPaymentResponse struct {
-	Success   bool
-	PaymentId string
-}
-
-func RegisterPaymentServiceServer(s *grpc.Server, srv *PaymentServer) {
 }
