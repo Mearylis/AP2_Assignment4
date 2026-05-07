@@ -1,5 +1,7 @@
 # Assignment 4 - Performance Optimization & External Integrations
 
+**GitHub Repository**: [https://github.com/Mearylis/AP2_Assignment4](https://github.com/Mearylis/AP2_Assignment4)
+
 ## Caching Strategy (Order Service)
 The Order Service implements a **Cache-aside** pattern using Redis:
 - **Read Path**: When `GetOrder` is called, the service first checks Redis for the key `order:{id}`.
