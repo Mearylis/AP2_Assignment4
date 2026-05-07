@@ -32,6 +32,7 @@ type Payment struct {
 
 type PaymentEvent struct {
 	EventID   string  `json:"event_id"`
+	PaymentID string  `json:"payment_id"`
 	OrderID   string  `json:"order_id"`
 	Amount    float64 `json:"amount"`
 	Email     string  `json:"customer_email"`
@@ -73,6 +74,7 @@ func (s *PaymentServer) ProcessPayment(ctx context.Context, req *pb.ProcessPayme
 
 	event := PaymentEvent{
 		EventID:   fmt.Sprintf("EVT-%d", time.Now().UnixNano()),
+		PaymentID: payment.ID,
 		OrderID:   payment.OrderID,
 		Amount:    payment.Amount,
 		Email:     payment.Email,

@@ -31,6 +31,17 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   order-service:
     build:
       context: ./order-service
@@ -44,8 +55,11 @@ services:
       - DB_NAME=orderdb
       - DB_PORT=5432
       - PAYMENT_SERVICE_URL=payment_service:50052
+      - REDIS_URL=redis_cache:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   payment-service:
@@ -78,10 +92,14 @@ services:
       - DB_NAME=notifdb
       - DB_PORT=5432
       - RABBITMQ_URL=amqp://admin:admin123@rabbitmq_broker:5672/
+      - REDIS_URL=redis_cache:6379
+      - PROVIDER_MODE=SIMULATED
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

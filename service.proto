@@ -1,0 +1,48 @@
+syntax = "proto3";
+package pb;
+option go_package = "./pb";
+
+service OrderService {
+  rpc CreateOrder (CreateOrderRequest) returns (CreateOrderResponse);
+  rpc GetOrder (GetOrderRequest) returns (Order);
+}
+
+message Order {
+  string id = 1;
+  string user_id = 2;
+  double amount = 3;
+  string status = 4;
+  string email = 5;
+  string created_at = 6;
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message CreateOrderRequest {
+  string UserId = 1;
+  double Amount = 2;
+  string Email = 3;
+}
+
+message CreateOrderResponse {
+  string OrderId = 1;
+  string Status = 2;
+  string PaymentId = 3;
+}
+
+service PaymentService {
+  rpc ProcessPayment (ProcessPaymentRequest) returns (ProcessPaymentResponse);
+}
+
+message ProcessPaymentRequest {
+  string OrderId = 1;
+  double Amount = 2;
+  string Email = 3;
+}
+
+message ProcessPaymentResponse {
+  bool Success = 1;
+  string PaymentId = 2;
+}

@@ -10,9 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/json"
 	"pb"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/postgres"
@@ -30,6 +33,7 @@ type Order struct {
 
 type OrderService struct {
 	db            *gorm.DB
+	rdb           *redis.Client
 	paymentClient pb.PaymentServiceClient
 	grpcServer    *grpc.Server
 }
@@ -61,11 +65,13 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *pb.CreateOrderReques
 
 	if err != nil {
 		s.orderService.db.Model(order).Update("status", "PAYMENT_FAILED")
+		s.orderService.invalidateCache(order.ID)
 		return nil, status.Errorf(codes.Internal, "payment failed: %v", err)
 	}
 
 	if paymentResp.Success {
 		s.orderService.db.Model(order).Update("status", "COMPLETED")
+		s.orderService.invalidateCache(order.ID)
 		return &pb.CreateOrderResponse{
 			OrderId:   order.ID,
 			Status:    "COMPLETED",
@@ -74,7 +80,83 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *pb.CreateOrderReques
 	}
 
 	s.orderService.db.Model(order).Update("status", "PAYMENT_FAILED")
+	s.orderService.invalidateCache(order.ID)
 	return nil, status.Errorf(codes.Internal, "payment processing failed")
+}
+
+func (s *OrderServer) GetOrder(ctx context.Context, req *pb.GetOrderRequest) (*pb.Order, error) {
+	cacheKey := fmt.Sprintf("order:%s", req.OrderId)
+
+	// Cache-aside: Read Path
+	val, err := s.orderService.rdb.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var order pb.Order
+		if err := json.Unmarshal([]byte(val), &order); err == nil {
+			log.Printf("Cache hit for order %s", req.OrderId)
+			return &order, nil
+		}
+	}
+
+	log.Printf("Cache miss for order %s", req.OrderId)
+	var orderDB Order
+	if err := s.orderService.db.First(&orderDB, "id = ?", req.OrderId).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, status.Errorf(codes.NotFound, "order not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get order: %v", err)
+	}
+
+	resp := &pb.Order{
+		Id:        orderDB.ID,
+		UserId:    orderDB.UserID,
+		Amount:    orderDB.Amount,
+		Status:    orderDB.Status,
+		Email:     orderDB.Email,
+		CreatedAt: orderDB.CreatedAt.Format(time.RFC3339),
+	}
+
+	// Set cache with TTL
+	data, _ := json.Marshal(resp)
+	ttl := 5 * time.Minute
+	s.orderService.rdb.Set(ctx, cacheKey, data, ttl)
+
+	return resp, nil
+}
+
+func (s *OrderService) invalidateCache(orderID string) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("order:%s", orderID)
+	s.rdb.Del(ctx, cacheKey)
+	log.Printf("Invalidated cache for order %s", orderID)
+}
+
+func (s *OrderService) RateLimitInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return handler(ctx, req)
+	}
+
+	clientIP := p.Addr.String()
+	key := fmt.Sprintf("ratelimit:%s", clientIP)
+
+	// Limit: 10 requests per minute
+	limit := 10
+	window := time.Minute
+
+	count, err := s.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "rate limit check failed")
+	}
+
+	if count == 1 {
+		s.rdb.Expire(ctx, key, window)
+	}
+
+	if count > int64(limit) {
+		return nil, status.Errorf(codes.ResourceExhausted, "too many requests, please try again later")
+	}
+
+	return handler(ctx, req)
 }
 
 func main() {
@@ -106,11 +188,16 @@ func main() {
 	paymentClient := pb.NewPaymentServiceClient(paymentConn)
 
 	orderService := &OrderService{
-		db:            db,
+		db: db,
+		rdb: redis.NewClient(&redis.Options{
+			Addr: getEnv("REDIS_URL", "localhost:6379"),
+		}),
 		paymentClient: paymentClient,
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(orderService.RateLimitInterceptor),
+	)
 	pb.RegisterOrderServiceServer(grpcServer, &OrderServer{orderService: orderService})
 	reflection.Register(grpcServer)
 
